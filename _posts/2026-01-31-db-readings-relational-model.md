@@ -1,6 +1,7 @@
 ---
 title: 'DB Reading: A Relational Model of Data for Large Shared Data Banks (1970)'
 date: 2026-02-21
+permalink: /posts/2026/02/db-readings-relational-model/
 tags:
   - databases
   - readings

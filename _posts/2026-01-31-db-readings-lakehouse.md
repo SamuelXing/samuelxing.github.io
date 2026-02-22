@@ -1,6 +1,7 @@
 ---
 title: 'DB Reading: Lakehouse - A New Generation of Open Platforms that Unify Data Warehousing and Advanced Analytics (2021)'
 date: 2026-02-21
+permalink: /posts/2026/02/db-readings-lakehouse/
 tags:
   - databases
   - readings

@@ -1,6 +1,7 @@
 ---
 title: 'DB Reading: The Five-Minute Rule Ten Years Later (1997)'
 date: 2026-02-21
+permalink: /posts/2026/02/db-readings-five-minute-rule/
 tags:
   - databases
   - readings

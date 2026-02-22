@@ -1,6 +1,7 @@
 ---
 title: 'DB Reading: Access Path Selection in a Relational Database Management System (1979)'
 date: 2026-02-21
+permalink: /posts/2026/02/db-readings-access-path-selection/
 tags:
   - databases
   - readings
