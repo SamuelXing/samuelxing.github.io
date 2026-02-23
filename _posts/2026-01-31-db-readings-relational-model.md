@@ -1,15 +1,15 @@
 ---
-title: 'DB Reading: A Relational Model of Data for Large Shared Data Banks (1970)'
+title: 'A Relational Model of Data for Large Shared Data Banks (1970)'
 date: 2026-02-21
 permalink: /posts/2026/02/db-readings-relational-model/
 tags:
   - databases
-  - readings
+  - relational
 ---
 
-Link: [https://www.cs.cmu.edu/~15721-f25/papers/A_Relational_Model_of_Data.pdf](https://www.cs.cmu.edu/~15721-f25/papers/A_Relational_Model_of_Data.pdf)
-
 This work is profound. We can see it as the foundation of every modern relational database. Programs should say *what* data they want, not *how* to get it - Data Independencies. In the relational model, relations are value-based, not pointer-based, so the system can reorganize storage freely without breaking applications.
+
+Link: [https://www.cs.cmu.edu/~15721-f25/papers/A_Relational_Model_of_Data.pdf](https://www.cs.cmu.edu/~15721-f25/papers/A_Relational_Model_of_Data.pdf)
 
 <details markdown="1">
 <summary><b>Detailed Notes</b></summary>

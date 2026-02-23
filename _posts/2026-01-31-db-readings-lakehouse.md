@@ -1,18 +1,17 @@
 ---
-title: 'DB Reading: Lakehouse - A New Generation of Open Platforms that Unify Data Warehousing and Advanced Analytics (2021)'
+title: 'Lakehouse - A New Generation of Open Platforms that Unify Data Warehousing and Advanced Analytics (2021)'
 date: 2026-02-21
 permalink: /posts/2026/02/db-readings-lakehouse/
 tags:
   - databases
-  - readings
+  - lakehouse
 ---
 
-Link: [https://15721.courses.cs.cmu.edu/spring2024/papers/01-modern/armbrust-cidr21.pdf](https://15721.courses.cs.cmu.edu/spring2024/papers/01-modern/armbrust-cidr21.pdf)
+This paper proposes the Lakehouse, a new data platform architecture that replaces the costly two-tier data lake + warehouse pattern with a single tier built on open storage formats (e.g., Parquet) enriched by a transactional metadata layer (e.g., Delta Lake). By storing data once in an open, directly accessible format while providing warehouse-grade features like ACID transactions, versioning, indexing, and SQL optimization, the Lakehouse eliminates data staleness and redundancy, reduces cost and vendor lock-in, and enables machine learning and analytics tools to work directly over the same data. Evaluated on TPC-DS benchmarks, a Lakehouse system showed performance competitive with leading cloud warehouses, and the paper identifies future work in metadata layer design, new storage formats, caching strategies, and serverless computing.
 
+Link: [Paper PDF](https://15721.courses.cs.cmu.edu/spring2024/papers/01-modern/armbrust-cidr21.pdf)
 
 ![Lakehouse Figure 2](/images/2026-01-31-db-readings-1-10/LakehouseFig2.png)
-
-This paper proposes the Lakehouse, a new data platform architecture that replaces the costly two-tier data lake + warehouse pattern with a single tier built on open storage formats (e.g., Parquet) enriched by a transactional metadata layer (e.g., Delta Lake). By storing data once in an open, directly accessible format while providing warehouse-grade features like ACID transactions, versioning, indexing, and SQL optimization, the Lakehouse eliminates data staleness and redundancy, reduces cost and vendor lock-in, and enables machine learning and analytics tools to work directly over the same data. Evaluated on TPC-DS benchmarks, a Lakehouse system showed performance competitive with leading cloud warehouses, and the paper identifies future work in metadata layer design, new storage formats, caching strategies, and serverless computing.
 
 <details markdown="1">
 <summary><b>Detailed Notes</b></summary>

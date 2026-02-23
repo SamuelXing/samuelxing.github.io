@@ -1,15 +1,16 @@
 ---
-title: 'DB Reading: Access Path Selection in a Relational Database Management System (1979)'
+title: 'Access Path Selection in a Relational Database Management System (1979)'
 date: 2026-02-21
 permalink: /posts/2026/02/db-readings-access-path-selection/
 tags:
   - databases
-  - readings
+  - relational
 ---
 
-Link: [https://www.cs.cmu.edu/~15721-f25/papers/System_R_optimizer.pdf](https://www.cs.cmu.edu/~15721-f25/papers/System_R_optimizer.pdf)
-
 This paper presents the query optimizer for System R, one of the first cost-based optimizers for relational databases. The optimizer uses catalog statistics — such as relation cardinalities, index key counts, and page counts — to estimate the cost of different access paths for both single-table queries and multi-table joins.
+
+Link: [Paper PDF](https://www.cs.cmu.edu/~15721-f25/papers/System_R_optimizer.pdf)
+
 
 <details markdown="1">
 <summary><b>Detailed Notes</b></summary>

@@ -1,15 +1,17 @@
 ---
-title: 'DB Reading: The Five-Minute Rule Ten Years Later (1997)'
+title: 'The Five-Minute Rule Ten Years Later (1997)'
 date: 2026-02-21
 permalink: /posts/2026/02/db-readings-five-minute-rule/
 tags:
   - databases
-  - readings
+  - foundation
 ---
 
-Link: [https://www.cs.cmu.edu/~natassa/courses/15-721/papers/gray.pdf](https://www.cs.cmu.edu/~natassa/courses/15-721/papers/gray.pdf)
-
 The five-minute rule(for random access) captures the tradeoff between the cost of RAM and the cost of disk I/O. Given the access frequency of a data page, if the page is accessed more often than once every five minutes, it is cheaper to keep it cached in RAM; otherwise, it is cheaper to re-read it from disk on each access.
+
+Link: [Paper PDF](https://www.cs.cmu.edu/~natassa/courses/15-721/papers/gray.pdf)
+
+
 
 ```python
 
