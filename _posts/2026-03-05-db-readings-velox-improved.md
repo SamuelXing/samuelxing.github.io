@@ -29,6 +29,48 @@ Velox is deployed at Meta as the execution backend for Presto (via Prestissimo),
 The "shared library" approach is compelling but faces an adoption challenge: every engine that integrates Velox must adapt its plan representation and semantics to Velox's model, which is non-trivial. The deeper question is whether one execution layer can truly serve OLAP, streaming, and ML workloads without becoming bloated, or whether the abstraction leaks under divergent performance requirements.
 
 
+### Deep Dive: Memory Pool
+
+#### Why not just use malloc/new?
+A database engine needs a *memory manager*, not just a *memory allocator*. `malloc` has no accounting (can't track per-query/operator usage), no graceful degradation (OOM = crash), accumulates fragmentation over time, has no hierarchy or policy, and is optimized for many small allocations — the opposite of database patterns (few large, batch-lifetime allocations like hash tables and sort buffers).
+
+#### How Velox achieves zero fragmentation: mmap + madvise
+Velox bypasses malloc and manages memory at OS page level:
+1. **`mmap`** reserves a large contiguous virtual address range (no physical RAM allocated yet)
+2. Pages are faulted in on demand when touched
+3. **`madvise(MADV_DONTNEED)`** releases physical pages back to the OS *without* releasing the virtual address range
+4. Re-accessing those addresses faults in fresh pages — no fragmentation because the virtual space stays contiguous
+
+#### Hierarchical memory pools
+```
+Root MemoryPool (system-wide limit, e.g. 64GB)
+├── Query A Pool (limit: 10GB)
+│   ├── HashJoin operator (3GB)
+│   └── Aggregate operator (2GB)
+└── Query B Pool (limit: 10GB)
+    └── TableScan operator (1GB)
+```
+
+#### Overflow handling: arbitration
+When an operator exceeds its limit, the **memory arbitrator** kicks in:
+1. First, try to reclaim from the **same query** — spill the cheapest operator (Sort is cheapest, then Aggregate, then HashJoin)
+2. If not enough, reclaim from **other queries** by forcing their operators to spill
+3. If nothing can be spilled, queue the request or fail the query gracefully — never crash
+
+Operators implement a `reclaimableBytes()` / `reclaim()` interface. They don't decide *when* to spill — the arbitrator makes the global decision based on spill cost.
+
+#### Memory Pool vs Buffer Pool
+
+|  | Buffer Pool (traditional DBMS) | Memory Pool (Velox) |
+|---|---|---|
+| **Role** | Cache for disk pages | Allocator for execution state |
+| **Unit** | Fixed-size pages (4KB/8KB) | Variable-size (vectors, hash tables) |
+| **Disk** | Fundamental — every page has disk backing | Optional — spill only under pressure |
+| **Stores** | Persistent table/index data | Ephemeral intermediate query state |
+| **Eviction** | Always happening (LRU/clock) | Only under memory pressure |
+
+Velox has no buffer pool because it's an execution engine, not a storage engine. Data comes from external sources via I/O connectors; the storage layer handles its own caching.
+
 ### Evaluate my original writeup
 
 | Aspect | Original | How to improve |
