@@ -9,7 +9,7 @@ tags:
 
 This work is profound. We can see it as the foundation of every modern relational database. Programs should say *what* data they want, not *how* to get it - Data Independencies. In the relational model, relations are value-based, not pointer-based, so the system can reorganize storage freely without breaking applications.
 
-Link: [https://www.cs.cmu.edu/~15721-f25/papers/A_Relational_Model_of_Data.pdf](https://www.cs.cmu.edu/~15721-f25/papers/A_Relational_Model_of_Data.pdf)
+Link: [A_Relational_Model_of_Data.pdf](https://www.cs.cmu.edu/~15721-f25/papers/A_Relational_Model_of_Data.pdf)
 
 <details markdown="1">
 <summary><b>Detailed Notes</b></summary>

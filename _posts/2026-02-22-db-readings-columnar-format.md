@@ -9,7 +9,7 @@ tags:
 
 This paper introduces a benchmark framework calibrated to real-world data distributions for a rigorous Parquet vs. ORC comparison. Four design lessons emerge: default dictionary encoding, favoring decode speed over compression ratio, optional block compression, and finer-grained auxiliary structures
 
-Link: [https://15721.courses.cs.cmu.edu/spring2024/papers/02-data1/p148-zeng.pdf](https://15721.courses.cs.cmu.edu/spring2024/papers/02-data1/p148-zeng.pdf)
+Link: [p148-zeng.pdf](https://15721.courses.cs.cmu.edu/spring2024/papers/02-data1/p148-zeng.pdf)
 
 <details markdown="1">
 <summary><b>Detailed Notes</b></summary>

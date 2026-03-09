@@ -9,7 +9,7 @@ tags:
 
 This is the definitive survey that established the taxonomy for parallel database architectures (shared-memory, shared-disk, shared-nothing) and defined the performance metrics (speedup and scaleup) that the field still uses today. It made the influential argument that shared-nothing is the superior architecture for scaling database systems.
 
-Link: [https://www.cs.cmu.edu/~15721-f25/papers/Parallel_Database_Systems.pdf](https://www.cs.cmu.edu/~15721-f25/papers/Parallel_Database_Systems.pdf)
+Link: [Parallel_Database_Systems.pdf](https://www.cs.cmu.edu/~15721-f25/papers/Parallel_Database_Systems.pdf)
 
 <details markdown="1">
 <summary><b>Detailed Notes</b></summary>

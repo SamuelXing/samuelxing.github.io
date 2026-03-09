@@ -9,7 +9,7 @@ tags:
 This paper addresses a real gap in production query optimization: existing Reversion-Based Plan Correction (RBPC) only considers whole previously-executed plans, which can overlook efficient subplans hidden across different plans. Plan Stitch fills this gap by opportunistically combining the best subplans from old plans, achieving better results than any single previously-executed plan.
 
 
-Link: [https://www.cs.cmu.edu/~15721-f25/papers/Plan_Stitching.pdf](https://www.cs.cmu.edu/~15721-f25/papers/Plan_Stitching.pdf)
+Link: [Plan_Stitching.pdf](https://www.cs.cmu.edu/~15721-f25/papers/Plan_Stitching.pdf)
 
 
 <details markdown="1">
