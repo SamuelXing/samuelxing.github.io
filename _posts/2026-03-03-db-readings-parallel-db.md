@@ -28,7 +28,7 @@ No system was built — this is a survey/tutorial paper. It references existing 
 The paper's strong bet on shared-nothing proved prescient for OLAP and data warehousing, but modern systems increasingly use hybrid architectures (e.g., shared-disk with disaggregated storage like Snowflake, Aurora, BigQuery) enabled by fast networks that didn't exist in 1992. The "network is the bottleneck" assumption that drove the shared-nothing argument has been largely invalidated by RDMA and cloud object stores.
 
 
-### How to improve
+### AI evaluation on my original notes
 1. Be specific, not vague. Instead of "discussed different processing models," say "defined three architectures: shared-memory, shared-disk, shared-nothing, and evaluated each on speedup and scaleup." Naming the concrete things shows you understood the paper.
 
 2. Capture the argument, not just the topics. Your notes say what the paper talked about but not what it argued. The core argument is: shared-nothing scales best because it avoids resource contention, despite higher complexity in partitioning and query coordination.
