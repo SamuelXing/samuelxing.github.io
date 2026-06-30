@@ -2,6 +2,7 @@
 title: 'Memory Ordering'
 date: 2026-05-30
 permalink: /posts/2026/05/memory-ordering-quick-notes/
+published: false
 tags:
   - rust
   - concurrency
