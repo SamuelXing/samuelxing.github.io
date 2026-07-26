@@ -1,5 +1,5 @@
 ---
-title: "The Single-Flight Design Space: Three Ways to Dedup Concurrent Requests"
+title: "The Single-Flight Design Space"
 date: 2026-07-24
 permalink: /posts/2026/07/single-flight-design-space/
 tags:
@@ -10,44 +10,42 @@ tags:
   - ai-teach-me-something
 ---
 
-"Just single-flight it" is the usual advice for deduplicating concurrent requests to the same key. The phrase hides a choice, though — two of them. Do you keep the value after the fetch finishes, and can a caller that shows up mid-fetch be made to wait? Those two questions give you a 2×2, and three of its four cells are designs people actually ship. This post walks through the three, the trade-off each one makes, and the questions that tell you which the requirements are asking for.
+"Just single-flight it" is standard advice for collapsing concurrent requests to the same key. It sounds like one technique. It isn't: hiding under the name are two independent decisions — whether you keep the value once the fetch finishes, and whether a caller that arrives mid-fetch has to wait. Cross the two and you get a 2×2 grid. Three of the four cells are designs people actually ship; the fourth doesn't make sense. This post goes through the three, what each one trades away, and how to tell which one a requirement is asking for.
 
-## The problem, stated precisely
+## The problem
 
-Fifty concurrent callers want the bytes at `URL`. The upstream fetch takes 100ms and costs money. You want three things:
+Fifty callers want the bytes at the same URL, at the same time. The upstream fetch takes 100ms and costs money. You want exactly one upstream call, all fifty callers to end up with the bytes, and no caller waiting longer than the fetch itself.
 
-1. **Exactly one** upstream call, not fifty.
-2. **All fifty callers** get the bytes.
-3. **No caller waits longer than they have to** — ideally not longer than the underlying fetch.
+The naive version fires fifty fetches. Putting a `HashMap<URL, Bytes>` behind a mutex doesn't help: the first caller sees a miss and starts fetching, but for the next 100ms the cache is still empty, so the other forty-nine also see a miss and fetch too. Fifty upstream calls either way, now with extra locking.
 
-The naive implementation has everybody fetch: fifty upstream calls. A `HashMap<URL, Bytes>` cache behind a mutex doesn't help either — on a miss, the first caller fetches and populates, but the other forty-nine also see a miss and *also* fetch. Fifty upstream calls again, now with more locking.
+Single-flight fixes this by electing a leader. The first caller to miss does the fetch; anyone arriving while it's in flight becomes a follower and waits for the leader's result. One upstream call, fifty replies.
 
-Single-flight fixes this by electing a **leader**: on a miss, the first caller does the fetch, and concurrent callers become **followers** who wait on the leader's result. One upstream call, fifty replies.
-
-That description is what most people mean by "single-flight." But two decisions are baked into it, and both change the behavior enough that they deserve to be named.
+That's the part everyone agrees on. What the name leaves unspecified are two decisions, and each one changes the behavior.
 
 ## The two axes
 
-**Axis 1: cache after completion?**
-- **Yes** — once the fetch completes, keep the value. Future callers get it from cache without fetching again. You've built a memoizer.
-- **No** — once the fetch completes, forget it. The *next* caller after completion triggers a fresh fetch. You've built pure in-flight dedup.
+First decision — what happens after the fetch completes?
 
-**Axis 2: do readers block on writers?**
-- **Yes** — a caller arriving during an in-flight fetch waits for that fetch. Its latency equals your upstream's latency.
-- **No** — a caller arriving during an in-flight fetch returns *something* immediately (a stale value, or nothing) without waiting.
+- Keep the value. Future callers read it from the cache without fetching. This is memoization.
+- Throw it away. The next caller triggers a fresh fetch. This is pure in-flight dedup.
+
+Second decision — what happens to a caller that arrives while a fetch is in flight?
+
+- It waits. Its latency becomes your upstream's latency.
+- It gets something back immediately (a stale value, or nothing) without waiting.
 
 Two axes, four combinations:
 
-|  | readers CAN block on writer | readers CANNOT block on writer |
-|---|:---:|:---:|
-| **cache after completion** | **V2** — per-URL `Mutex<Option<V>>` | **SWR** — split cache + in-flight, or unified state machine |
-| **no cache after completion** | **V1** — broadcast, remove on send | *degenerate — nothing to return* |
+|  | readers block on writer | readers don't block |
+|---|:---|:---|
+| **cache after completion** | **per-key mutex** — `Mutex<Option<V>>` per key | **stale-while-revalidate** — cache in front of a single-flight |
+| **no cache** | **broadcast** — dedup only, remove on send | *degenerate — nothing to return* |
 
-The fourth cell collapses: if you don't cache, a reader that arrives before any fetch has completed for a key has nothing to return. So there are three real designs. Everything else — moka's config surface, Go's `singleflight.Group`, Temporal's request-id dedup, Cloudflare's origin shield — is one of these three plus scaling work.
+The empty cell is the no-cache, non-blocking combination, and it collapses on contact: if nothing is ever cached and the caller refuses to wait, there is nothing to hand back. So three real designs. Everything else in the wild — moka's configuration surface, Go's `singleflight.Group`, Temporal's request-id dedup, Cloudflare's origin shield — is one of these three plus scaling work.
 
-## Design 1 (V1): broadcast, no cache
+## Broadcast: dedup with no cache
 
-The pure-dedup version, built on `Mutex<HashMap<K, broadcast::Sender<Arc<V>>>>`.
+This is the no-cache design. The entire structure is `Mutex<HashMap<K, broadcast::Sender<Arc<V>>>>` — a map of in-flight fetches and nothing else.
 
 ```rust
 async fn fetch(&self, k: K, do_fetch: impl FnOnce() -> Fut) -> Arc<V> {
@@ -78,15 +76,17 @@ async fn fetch(&self, k: K, do_fetch: impl FnOnce() -> Fut) -> Arc<V> {
 }
 ```
 
-The leader inserts a `broadcast::Sender` under the lock and does the fetch. Followers find the existing sender and `subscribe()` **under the same lock** — the detail that makes this correct. If lookup and subscribe are two separate lock acquisitions, two leaders can be elected for the same key. Once the fetch completes the leader removes the entry, then broadcasts, and the followers receive.
+The correctness hinge is that lookup and subscribe happen under a single lock acquisition. A follower finds the existing sender and subscribes before the lock is released. Split that into two acquisitions — check the map, release, then subscribe — and two callers can both see an empty map and both become leaders for the same key, which is exactly what you were trying to prevent.
 
-There's no cache, so the next caller for that key finds an empty map, becomes a fresh leader, and fires a fresh fetch. Readers that arrive during a fetch wait on `rx.recv().await`, so their latency matches the fetch. And if the leader's `do_fetch` panics, its `Sender` drops during unwinding and followers see `RecvError::Closed`; you either `.expect()` to propagate the panic or wrap the leader in a Drop guard that clears the map so the next caller can re-lead.
+There's no cache, so once the leader removes the entry and broadcasts, the next caller finds an empty map and starts a fresh fetch. Followers that arrive mid-fetch wait on `rx.recv().await`, so their latency matches the fetch.
 
-**When to reach for it:** the value can change server-side and you *cannot* cache, because stale answers are actually wrong. Layer-1 CDN origin shields. Rate-limited APIs where memoizing would violate freshness.
+Panics need a decision. If `do_fetch` panics, the leader's `Sender` is dropped as the stack unwinds, and every follower's `recv()` fails with `RecvError::Closed`. Either `.expect()` it so the panic propagates to the followers too, or wrap the leader in a Drop guard that clears the map entry so the next caller can take over as leader and retry.
 
-## Design 2 (V2): per-URL mutex holding `Option<V>`
+**When to reach for it:** the value changes server-side and stale answers are wrong, so you can't cache. Layer-1 CDN origin shields. Rate-limited APIs where memoizing would violate freshness.
 
-The simpler cached version, built on `HashMap<K, Arc<tokio::sync::Mutex<Option<V>>>>` behind an outer `Mutex` for the map itself.
+## Per-key mutex: cache that blocks readers
+
+The simplest cached design: each key gets its own mutex over an `Option`, and an outer lock hands them out — `HashMap<K, Arc<tokio::sync::Mutex<Option<V>>>>`.
 
 ```rust
 async fn fetch(&self, k: K, do_fetch: impl FnOnce() -> Fut) -> Arc<V> {
@@ -107,23 +107,23 @@ async fn fetch(&self, k: K, do_fetch: impl FnOnce() -> Fut) -> Arc<V> {
 }
 ```
 
-Each key gets its own `tokio::Mutex<Option<V>>`. The first holder sees `None`, fetches, and fills `Some(v)`; later holders see `Some(v)` and return it, which is the cache. The entry stays in the map, so the next caller sees `Some(v)` immediately — this is a cache, not in-flight dedup, and the distinction is worth keeping straight when you describe it.
+The first caller to acquire the per-key lock sees `None`, fetches, and fills in `Some(v)`. Everyone queued behind it then acquires the lock, sees `Some(v)`, and returns it. The entry stays in the map afterward, so later callers get a plain cache hit with no fetch at all. This is a cache, not just in-flight dedup.
 
-Readers during a fetch queue on the per-URL mutex, so their latency matches the fetch, same as V1 by a different mechanism. Panic handling is cleaner than V1: if `do_fetch` panics, the guard drops during unwinding, the slot stays `None`, and the next follower to acquire it becomes a fresh leader. RAII does the work, no Drop guard needed.
+Callers arriving during a fetch queue on the per-key mutex, so their latency matches the fetch — the same outcome as broadcast, by a different mechanism. Panic handling comes for free here: if `do_fetch` panics, the guard drops during unwinding, the slot is still `None`, and whoever acquires the lock next becomes the new leader. RAII does the work; no Drop guard needed.
 
-**When to reach for it:** you want memoization *and* dedup, and the map growing without bound is either acceptable or handled by an LRU layer (moka's `weigher`). This is what most in-process caches actually build.
+**When to reach for it:** you want memoization and dedup together, and either the map growing without bound is acceptable or an LRU layer handles it (moka's `weigher`). Most in-process caches are this design.
 
-## The interview twist: "readers must not be blocked by writers"
+## Adding the non-blocking requirement
 
-This was a real follow-up I got in an interview, and it rules out both V1 and V2 — in both, followers wait on the leader's fetch.
+Now add a third requirement: a reader must never block on a writer. Both designs so far fail it, because in both, followers sit and wait for the leader's fetch.
 
-The insight that unlocks it: you can't satisfy "no waiting" without caching. If nothing is cached, a reader arriving mid-fetch has nothing to hand back. So the constraint is really *have something cached, and let readers hit it lock-free even during a refresh*. That's the SWR cell — stale-while-revalidate, HTTP's cache-control directive, and how every serious CDN works.
+Here's the catch: you can't satisfy "never wait" without caching. A reader arriving mid-fetch either waits or returns something, and if nothing is cached there is nothing to return. So the requirement really means: keep a value around, and let readers grab it even while a refresh is running. That's stale-while-revalidate (SWR) — the HTTP cache-control directive of the same name, and the way CDNs keep serving reads while the origin refreshes underneath.
 
-## Design 3 (SWR): split cache + in-flight, or unified state machine
+## Stale-while-revalidate: cache that doesn't block readers
 
-Two implementations, same behavior. Both put a cache in front of a single-flight so readers hit the cache lock-free while a writer works in the background.
+Two implementations with the same behavior. Both put a cache in front of a single-flight, so readers hit the cache while a writer refreshes in the background.
 
-### Version A: two data structures
+### Version A: split (two data structures)
 
 ```rust
 struct Downloader {
@@ -134,9 +134,9 @@ struct Downloader {
 }
 ```
 
-The fast path is `cache.read().get(&k).cloned()`. If the value is there, return it immediately — even if a refresh is in flight, you get the old value. Only a cold start, where no value has ever been cached, falls through to the single-flight and blocks. Readers touch `in_flight` only on a cold miss; writers populate both.
+The fast path is `cache.read().get(&k).cloned()`. If the value is there, return it immediately — even mid-refresh, you just get the old value. Only a cold start, where the key has never been cached, falls through to the single-flight and blocks. Readers touch `in_flight` only on that cold miss; writers populate both structures.
 
-### Version B: unified state machine
+### Version B: unified (one state machine)
 
 ```rust
 enum Entry {
@@ -152,7 +152,7 @@ struct Downloader {
 }
 ```
 
-One `HashMap`, one lock. Readers match on the variant:
+One map, one lock. A reader matches on the entry:
 
 | entry state | reader behavior |
 |---|:---|
@@ -161,19 +161,19 @@ One `HashMap`, one lock. Readers match on the variant:
 | `InFlight { prev: None, tx }` | subscribe, wait (cold-start only) |
 | `None` (map miss) | become leader, run fetch |
 
-The `prev` field is what unifies the two structures. A refresh transitions `Completed → InFlight { prev: Some(old) }`, so a reader during a refresh still finds something to return. Cold start is the honest exception — `prev: None`, and only then does a reader wait.
+The `prev` field is what merges Version A's two structures into one. When a refresh starts, the entry goes from `Completed(v)` to `InFlight { prev: Some(v) }`, so a reader during the refresh still finds a value to return. The only time a reader waits is a cold start, where `prev` is `None` because no value has ever existed.
 
-Version B is the same behavior as Version A with one lock and less code. The cost is that the single `Mutex` serializes concurrent readers briefly, where Version A's `RwLock` doesn't. Version A wins for hot-read workloads at scale; Version B wins for clarity. If you outgrow the single lock, a `DashMap<K, Entry>` gets the throughput back.
+The trade between them: Version B is less code with no ordering hazards, but its single `Mutex` briefly serializes readers that Version A's `RwLock` would let through in parallel. At very high read volume, A wins; everywhere else, B's clarity wins. If B's single lock ever does become the bottleneck, swapping in a `DashMap<K, Entry>` gets the throughput back without changing the design.
 
 ## The state-machine framing
 
-The refactor from A to B generalizes: when two data structures always change together and are always looked up together, they're usually one state machine split across two variables.
+The A-to-B refactor generalizes. When two data structures always change together and are always looked up together, they're usually one state machine accidentally split across two variables.
 
-Version A treats "in-flight tracking" and "cache" as separate concerns. Version B recognizes they're two states of the same thing — the key's known status — and encodes that as an enum. Doing so removes an ordering hazard: in A you have to insert into the cache *before* removing from `in_flight`, a constraint that's easy to get wrong; in B the transition is one atomic mutation under a single `Mutex::lock()`. This is the same reason Rust code reaches for an `enum` where C reaches for a struct with a tag field and a union.
+Version A treats "in-flight tracking" and "cache" as separate concerns. Version B notices they're two states of the same question — what do we currently know about this key? — and writes that down as an enum. Doing so removes an ordering hazard: in A, a finishing refresh must insert into the cache *before* removing from `in_flight`, because doing it in the other order opens a window where a reader finds the key in neither structure and starts a redundant fetch. In B, the transition is one mutation under one lock, so the window doesn't exist. It's the same instinct that makes Rust code reach for an `enum` where C reaches for a struct with a tag field and a union.
 
 ## The refcount trap (worked example)
 
-Every version of this pattern has a subtle bug that's easy to miss the first time. If your map is `HashMap<K, Arc<Mutex>>` and it has any LRU eviction, evicting an entry while someone holds its mutex silently breaks the design.
+Every version of this pattern grows the same bug once eviction shows up. If the map is `HashMap<K, Arc<Mutex>>` and anything — an LRU, a TTL sweep — can evict entries, then evicting an entry while someone holds its mutex silently breaks the design:
 
 ```
 op A: get(K) → Ctx1, lock Ctx1.mutex
@@ -182,9 +182,9 @@ op B: get(K) → NEW Ctx2, lock Ctx2.mutex   ← two mutexes for one key
 A and B now running concurrently on the same key. Broken.
 ```
 
-The mutex was supposed to serialize A and B, but B never touched A's mutex — it got a fresh one. The lock is meaningless.
+The mutex was supposed to serialize A and B. But B never touched A's mutex — the eviction threw it out, and B got a fresh one. Both callers proceed at once, each convinced it holds the lock.
 
-The fix is to refcount the entry, pin it while it's in use, and evict only when the refcount hits zero.
+The fix is to refcount the entry: pin it while anyone is using it, and only evict at zero.
 
 ```rust
 struct CacheEntry {
@@ -211,77 +211,73 @@ impl Drop for Handle {
 }
 ```
 
-The test that catches the bug: obtain two handles for the same key and assert `Arc::ptr_eq(&handle_a.context, &handle_b.context)`. If the eviction bug is present, they'll be different Arcs.
+The test that catches this: grab two handles for the same key and assert `Arc::ptr_eq(&handle_a.context, &handle_b.context)`. With the bug present, they're different Arcs.
 
-This is the same mechanism a DBMS buffer pool calls a **pin count** — pin a page while a transaction is using it, evict only when the pin count is zero. Any cache with a per-key locking primitive needs it: memcached, Redis's internal caches, the PostgreSQL buffer pool, Temporal's workflow context cache. It's worth recognizing here because you'll meet it again in the next per-key-mutex design you build.
+Database people will recognize this as a buffer pool's pin count: pin the page while a transaction uses it, evict only when the pin count is zero. Any cache that keeps a lock or context per key needs the same thing — memcached, Redis's internal caches, the PostgreSQL buffer pool, Temporal's workflow context cache.
 
-## The three questions that pick your design
+## Picking a design
 
-Ask these upfront in a design review or interview, and the answers land you on a design:
+Three questions settle it:
 
-1. **After a fetch completes, should the next caller re-fetch or reuse the value?** → cache (V2 / SWR) or no cache (V1)
-2. **If a fetch is in flight, can concurrent callers wait for it, or must they bypass?** → block OK (V1 / V2) or non-blocking (SWR)
-3. **If the leader crashes mid-fetch, what should waiters see?** → error propagation (V1) vs. RAII re-lead (V2 / SWR)
-
-Answer 1 = "no" → V1. Answer 1 = "yes" and answer 2 = "block OK" → V2. Answer 1 = "yes" and answer 2 = "non-blocking" → SWR (Version A if hot-read throughput matters, Version B if clarity matters).
-
-## Decision framework
+1. **After a fetch completes, should the next caller re-fetch or reuse the value?** Reuse means you're caching (per-key mutex or SWR); re-fetch means broadcast.
+2. **While a fetch is in flight, can concurrent callers wait for it?** If waiting is fine, broadcast or per-key mutex; if readers must not block, SWR.
+3. **If the leader dies mid-fetch, what should waiters see?** Broadcast propagates the error to followers; per-key mutex and SWR quietly elect a new leader via RAII.
 
 ```mermaid
 flowchart LR
     Q{Cache<br/>after completion?}
-    Q -->|No — content changes<br/>server-side| V1["V1: broadcast<br/>Mutex&lt;HashMap&lt;K, broadcast::Sender&gt;&gt;<br/>remove on send"]
+    Q -->|No — content changes<br/>server-side| B["Broadcast<br/>Mutex&lt;HashMap&lt;K, Sender&gt;&gt;<br/>remove on send"]
     Q -->|Yes — value is<br/>reusable| Q2{Readers block<br/>on writer OK?}
-    Q2 -->|Yes — simplest,<br/>lowest QPS| V2["V2: per-URL Mutex&lt;Option&lt;V&gt;&gt;<br/>RAII panic-safe<br/>cache grows unbounded"]
+    Q2 -->|Yes — simplest,<br/>lowest QPS| M["Per-key mutex<br/>Mutex&lt;Option&lt;V&gt;&gt;<br/>RAII panic-safe, unbounded"]
     Q2 -->|No — SLA-sensitive<br/>reads during refresh| Q3{Hot-read<br/>throughput?}
-    Q3 -->|Very high QPS| SWRA["SWR-A: RwLock cache<br/>+ Mutex in-flight<br/>concurrent read scaling"]
-    Q3 -->|Clarity over throughput| SWRB["SWR-B: unified Entry enum<br/>InFlight prev / Completed<br/>one lock, one state machine"]
-    style V1 fill:#fde68a,stroke:#b45309
-    style V2 fill:#bbf7d0,stroke:#065f46
-    style SWRA fill:#bbf7d0,stroke:#065f46
-    style SWRB fill:#bbf7d0,stroke:#065f46
+    Q3 -->|Very high QPS| SA["SWR split<br/>RwLock cache + Mutex in-flight<br/>concurrent read scaling"]
+    Q3 -->|Clarity over throughput| SB["SWR unified<br/>one Entry enum, one lock"]
+    style B fill:#fde68a,stroke:#b45309
+    style M fill:#bbf7d0,stroke:#065f46
+    style SA fill:#bbf7d0,stroke:#065f46
+    style SB fill:#bbf7d0,stroke:#065f46
     linkStyle 1 stroke:#065f46,stroke-width:2px
     linkStyle 3 stroke:#065f46,stroke-width:2px
 ```
 
-Green nodes are where most services land; yellow marks V1 as the specialized case where you genuinely want no caching. The bold green edges trace the cache-plus-non-blocking path that SLA-sensitive reads usually need.
+Green nodes are where most services land; yellow is broadcast, the specialized no-cache case. The bold edges trace the cache-plus-non-blocking path that latency-sensitive reads usually need.
 
-## Misconceptions worth retiring
+## Misconceptions
 
-**"Single-flight is one pattern."** It's a family of three, sitting in different cells of the cache/block 2×2. Naming which cell you're in tells the reader more than reciting the mechanism does.
+**"Single-flight is one pattern."** It's a family of three, sitting in different cells of the cache/block 2×2. Naming which one you mean is more useful than reciting the mechanism.
 
-**"V2 (per-URL mutex with `Option`) is just a cache with locking."** It's a cache and a single-flight in one structure, and it *conflates* them — readers wait on writers because the same mutex serves both roles. That conflation is a feature (simple, RAII-safe) or a bug (fails a "non-blocking reader" requirement) depending on what you were asked for.
+**"The per-key-mutex design is just a cache with locking."** It's a cache and a single-flight in one structure, and it deliberately conflates them: readers wait on writers because one mutex serves both roles. Whether that conflation is a feature (simple, panic-safe by construction) or a bug (fails a non-blocking-reader requirement) depends on what you were asked for.
 
-**"You need caching to satisfy 'readers not blocked by writers.'"** Correct. If nothing is cached, a mid-fetch reader has nothing to return. The `prev: Some(v)` field in the unified state machine is where the thing-to-return lives.
+**"A clever enough lock gives you non-blocking readers without a cache."** No lock does. A mid-fetch reader either waits or returns a previously stored value, and if nothing is stored, waiting is the only option. The `prev: Some(v)` field in the unified state machine is exactly where that stored value lives.
 
-**"Removing the in-flight entry before or after the broadcast doesn't matter."** It does. Remove-before-send means a caller arriving between the remove and the send becomes a fresh leader (dedup-in-flight semantics). Remove-after-send means they subscribe to a sender that's already fired and get the old value (stale-share semantics, which a broadcast cap of 1 supports). Both are defensible; state which one you're picking.
+**"Removing the in-flight entry before or after the broadcast doesn't matter."** It does. Remove-before-send means a caller arriving in the gap becomes a fresh leader — dedup-in-flight semantics. Remove-after-send means that caller subscribes to a sender that has already fired and receives the old value — stale-share semantics, which a broadcast capacity of 1 supports. Both are defensible; say which one you're picking.
 
-**"Refcount is a memory-management detail."** It's a correctness requirement. Without it, LRU eviction of your per-key mutex breaks the single-flight guarantee, because two callers can end up holding two different mutexes for the same logical key.
+**"Refcounting is a memory-management detail."** It's a correctness requirement. Without it, LRU eviction of a per-key mutex breaks the single-flight guarantee: two callers end up holding two different mutexes for the same key.
 
-**"moka handles all of this."** moka's `Cache::get_with(k, init)` is a productionized V2 with LRU on top — V2 semantics, not V1 or SWR. If you need SWR (refresh in the background, readers never wait), you compose `get_with` with `refresh_after_write`, and it's worth knowing that's what you're building on.
+**"moka handles all of this."** moka's `Cache::get_with(k, init)` is a productionized per-key-mutex design with LRU on top — that cell, not broadcast or SWR. For SWR behavior (refresh in the background, readers never wait), you compose `get_with` with `refresh_after_write`, and it helps to know that's what you're building.
 
-**"Sharding solves this."** Sharding scales the pattern across cores by reducing contention with a per-shard mutex. It doesn't change which cell you're in. Temporal shards workflows across history services, and each shard still runs one of these three designs for concurrent operations on a single workflow.
+**"Sharding solves this."** Sharding reduces contention by giving each shard its own lock. It scales whichever design you picked; it doesn't change which cell you're in. Temporal shards workflows across history services, and each shard still runs one of these three designs for concurrent operations on a single workflow.
 
 ## The one-line distillations
 
-> **The design space.** Concurrent-request dedup is a 2×2 on `{cache?, readers-block?}`. Three real cells; the fourth is degenerate.
+> **The design space.** Concurrent-request dedup is a 2×2 on `{cache?, readers-block?}`. Three real cells; the fourth has nothing to return.
 >
-> **The three designs.** V1 broadcast (no cache), V2 per-key mutex (cache + blocking), SWR (cache + non-blocking). Anything labeled "single-flight" is one of these three.
+> **The three designs.** Broadcast (no cache), per-key mutex (cache + blocking), SWR (cache + non-blocking). Anything called single-flight is one of these three.
 >
-> **The interview twist.** "Reader not blocked by writer" requires caching — a mid-fetch reader needs something already stored to return.
+> **The non-blocking case.** "Readers never block on writers" requires caching, because a mid-fetch reader needs something already stored to return.
 >
 > **The state-machine refactor.** When two data structures always change together and are looked up together, encode them as one enum.
 >
-> **The refcount trap.** A per-key mutex in an LRU cache without a refcount is silently broken. It's the same pin count a DBMS buffer pool uses.
+> **The refcount trap.** A per-key mutex in an LRU cache without a refcount is silently broken. It's the pin count from a DBMS buffer pool.
 >
-> **The three questions.** Cache after completion? Block during fetch? What do waiters see on a leader crash? The answers pick the design.
+> **The three questions.** Cache after completion? Block during fetch? What do waiters see when the leader crashes?
 
-The short version: **name the cell before you write the code. Cache-or-not and block-or-not decide the design; LRU, sharding, and tiering are downstream and don't change the choice.**
+The short version: name the combination before you write the code. Cache-or-not and block-or-not decide the design; LRU, sharding, and tiering come afterward and don't change the choice.
 
 ## Further reading
 
-- [`golang.org/x/sync/singleflight`](https://pkg.go.dev/golang.org/x/sync/singleflight) — the canonical implementation of V1 (broadcast, remove on send); short and readable
-- [`moka` crate](https://docs.rs/moka) — the productionized V2 for Rust with LRU + TTL + refresh-after-write; also read the [Caffeine design notes](https://github.com/ben-manes/caffeine/wiki/Design) it's based on
+- [`golang.org/x/sync/singleflight`](https://pkg.go.dev/golang.org/x/sync/singleflight) — the canonical broadcast implementation (remove on send); short and readable
+- [`moka` crate](https://docs.rs/moka) — the productionized per-key-mutex design for Rust with LRU + TTL + refresh-after-write; also read the [Caffeine design notes](https://github.com/ben-manes/caffeine/wiki/Design) it's based on
 - [HTTP `Cache-Control: stale-while-revalidate`](https://datatracker.ietf.org/doc/html/rfc5861) — the SWR spec, and where the vocabulary comes from
 - [Segcache paper (NSDI 2021)](https://www.usenix.org/conference/nsdi21/presentation/yang-juncheng) — Yao Yue's TTL-oriented cache design at Twitter
 - [Cloudflare tiered cache](https://blog.cloudflare.com/tiered-cache/) — SWR plus single-flight at edge scale
