@@ -64,9 +64,9 @@ async fn fetch(&self, k: K, do_fetch: impl FnOnce() -> Fut) -> Arc<V> {
     match role {
         Role::Leader(tx) => {
             let v = Arc::new(do_fetch().await);
-            // Remove BEFORE broadcasting: any caller arriving between
-            // remove and send becomes a NEW leader — that's dedup-in-flight,
-            // not memoization.
+            // Remove BEFORE broadcasting — the order matters. Reversed,
+            // a caller could find the sender AFTER it fired, subscribe
+            // too late, and never receive the value. See below.
             self.in_flight.lock().unwrap().remove(&k);
             let _ = tx.send(v.clone());
             v
@@ -79,6 +79,12 @@ async fn fetch(&self, k: K, do_fetch: impl FnOnce() -> Fut) -> Arc<V> {
 The correctness hinge is that lookup and subscribe happen under a single lock acquisition. A follower finds the existing sender and subscribes before the lock is released. Split that into two acquisitions — check the map, release, then subscribe — and two callers can both see an empty map and both become leaders for the same key, which is exactly what you were trying to prevent.
 
 There's no cache, so once the leader removes the entry and broadcasts, the next caller finds an empty map and starts a fresh fetch. Followers that arrive mid-fetch wait on `rx.recv().await`, so their latency matches the fetch.
+
+### Why remove before send?
+
+Because a `broadcast::Receiver` only sees values sent *after* it subscribed — nothing replays. If the leader sends first, there's a moment where the sender is still in the map but has already fired. A caller arriving in that moment subscribes too late, misses the value, and gets `Err(Closed)` when the sender drops — stuck forever, even though the fetch succeeded.
+
+Removing first makes the map honest: if you can find the sender, the send hasn't happened yet, so you're guaranteed to receive it. Callers arriving after the remove just start a fresh fetch as a new leader — which is what a no-cache design wants anyway.
 
 Panics need a decision. If `do_fetch` panics, the leader's `Sender` is dropped as the stack unwinds, and every follower's `recv()` fails with `RecvError::Closed`. Either `.expect()` it so the panic propagates to the followers too, or wrap the leader in a Drop guard that clears the map entry so the next caller can take over as leader and retry.
 
@@ -250,7 +256,7 @@ Green nodes are where most services land; yellow is broadcast, the specialized n
 
 **"A clever enough lock gives you non-blocking readers without a cache."** No lock does. A mid-fetch reader either waits or returns a previously stored value, and if nothing is stored, waiting is the only option. The `prev: Some(v)` field in the unified state machine is exactly where that stored value lives.
 
-**"Removing the in-flight entry before or after the broadcast doesn't matter."** It does. Remove-before-send means a caller arriving in the gap becomes a fresh leader — dedup-in-flight semantics. Remove-after-send means that caller subscribes to a sender that has already fired and receives the old value — stale-share semantics, which a broadcast capacity of 1 supports. Both are defensible; say which one you're picking.
+**"Removing the in-flight entry before or after the broadcast doesn't matter."** With `broadcast`, remove-after-send is a bug, not an alternative. A caller landing in the send-to-remove gap finds the sender, subscribes after the value has gone by, and gets `Closed` instead of the value — a receiver never sees sends from before it subscribed. Getting stale-share semantics (the gap caller receives the old value) requires a primitive that replays the latest value, like `watch` — and storing a value past completion is caching, a different cell of the grid.
 
 **"Refcounting is a memory-management detail."** It's a correctness requirement. Without it, LRU eviction of a per-key mutex breaks the single-flight guarantee: two callers end up holding two different mutexes for the same key.
 
