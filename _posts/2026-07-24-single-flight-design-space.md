@@ -248,6 +248,26 @@ flowchart LR
 
 Green nodes are where most services land; yellow is broadcast, the specialized no-cache case. The bold edges trace the cache-plus-non-blocking path that latency-sensitive reads usually need.
 
+## The cache, once you have one
+
+Pick any quadrant with a cache — per-key mutex, SWR-split, SWR-unified — and the pattern hands you the shape. What it doesn't hand you is a bounded memory footprint. `HashMap<K, V>` grows forever, and treats a 100-byte value the same as a 10-megabyte one. Production caches don't. There are four industry answers.
+
+**Byte-weighted LRU.** Track total bytes, not entry count. Every insert has a `weigher(k, v) -> u32`. Eviction picks victims until bytes drop under the high-water mark. This is what Moka, Caffeine, Guava, Redis (`maxmemory-policy allkeys-lru`), Varnish, and Nginx all do. In Rust it's one line: `Cache::builder().max_capacity(500 * MB).weigher(|_, v| v.len() as u32).build()`. It's the default answer.
+
+**Slab allocation.** Bucket by size class — 64B, 256B, 1KB, up through 1MB. Each class has its own fixed-size chunks and its own LRU. Values go into the smallest class that fits. No external fragmentation, per-class locking, cache-friendly access. Cost: internal fragmentation (a 65B value in a 128B slab wastes 63B) and cross-class migration is painful. memcached pioneered this; Pelikan evolved it into segment-based storage.
+
+**Arena plus bulk GC.** Preallocate a huge buffer, append values. When full, copying GC walks live entries into a fresh arena and drops the old. Zero per-value allocation cost, but you take a stop-the-world pause during GC. Right choice for asset caches and some ML feature stores; wrong for latency-sensitive services.
+
+**Off-line storage.** Keep the buffer pool fixed-size; represent large values as chains of small pages with pointers. PostgreSQL's TOAST does this; MySQL's InnoDB stores BLOBs off-page. The buffer pool machinery works unchanged, at the cost of an indirection per large-value read.
+
+For *very* large objects — video segments, ML models, gigabyte blobs — three more patterns compose with the above. **Chunking** splits large objects into fixed-size chunks and caches the chunks (Kafka segments, HLS video, IPFS blocks, S3 multipart). **Streaming** populates the cache as bytes arrive so concurrent readers consume the in-progress buffer (Varnish streaming, hyper HTTP/2). **`mmap`** lets the OS page cache handle eviction, and multiple processes share the same physical pages for free (Faiss, HNSW, LMDB, ML inference servers loading foundation models).
+
+The Segcache paper (Yao Yue, NSDI 2021) is worth reading here because it's essentially the buffer-pool pattern applied to KV caching with TTL as the organizing dimension. Group keys by TTL bucket into fixed-size segments (~1MB); one metadata header per segment instead of per key; drop the whole segment atomically when its TTL expires. On Twitter's workloads that yields a **60% memory reduction versus memcached** — because at their scale of small values, per-key metadata *was* the memory.
+
+**Rule of thumb.** Small values (a few KB) → byte-weighted LRU is the default; wrap in `Arc<Bytes>` for zero-copy sharing. Medium (KBs to MBs) → same, still byte-weighted, still `Arc<Bytes>`. Large (10+ MB) → chunk it, or `mmap` if file-backed. Very small values with heavy TTL churn → look at Segcache-style segment grouping.
+
+None of this changes your quadrant. The 2×2 tells you the *concurrency* design; this tells you the *memory* design. Both matter, and they're independent.
+
 ## Misconceptions
 
 **"Single-flight is one pattern."** It's a family of three, sitting in different cells of the cache/block 2×2. Naming which one you mean is more useful than reciting the mechanism.
