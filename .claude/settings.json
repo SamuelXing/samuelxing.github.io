@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('build_type:', d.get\\('build_type'\\)\\); print\\('status:', d.get\\('status'\\)\\); print\\('source:', d.get\\('source'\\)\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('build_type:', d.get\\('build_type'\\)\\); print\\('status:', d.get\\('status'\\)\\); print\\('html_url:', d.get\\('html_url'\\)\\)\")",
+      "Bash(git commit -m ' *)",
+      "Bash(git reset *)"
+    ]
+  }
+}

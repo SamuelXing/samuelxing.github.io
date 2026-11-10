@@ -280,7 +280,7 @@ None of this changes your quadrant. The 2×2 tells you the *concurrency* design;
 
 **"Refcounting is a memory-management detail."** It's a correctness requirement. Without it, LRU eviction of a per-key mutex breaks the single-flight guarantee: two callers end up holding two different mutexes for the same key.
 
-**"moka handles all of this."** moka's `Cache::get_with(k, init)` is a productionized per-key-mutex design with LRU on top — that cell, not broadcast or SWR. For SWR behavior (refresh in the background, readers never wait), you compose `get_with` with `refresh_after_write`, and it helps to know that's what you're building.
+**"moka handles all of this."** moka's `Cache::get_with(k, init)` is a productionized per-key-mutex design with eviction on top — that cell, not broadcast or SWR. Concurrent calls for a missing key coalesce into one evaluation of the init future, and if the leader's future panics, one of the waiting calls restarts the init — the same re-lead-on-failure semantics as the per-key mutex. What moka does *not* give you is SWR: there's no `refresh_after_write` (that's Caffeine, its Java ancestor), so a reader hitting an expired key waits for the refetch. If readers must never wait, you build that layer yourself.
 
 **"Sharding solves this."** Sharding reduces contention by giving each shard its own lock. It scales whichever design you picked; it doesn't change which cell you're in. Temporal shards workflows across history services, and each shard still runs one of these three designs for concurrent operations on a single workflow.
 
