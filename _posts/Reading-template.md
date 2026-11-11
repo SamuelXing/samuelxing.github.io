@@ -9,9 +9,9 @@ tags:
   - category2
 ---
 
+**Paper:** [<Title>](<pdf link>) — <Authors>, <Venue> <Year>
 
-<details markdown="1">
-<summary><b>Detailed Notes</b></summary>
+## TL;DR
 
 ### Problem — what problem, and why is it hard? (1-2 sentences)
 
@@ -25,4 +25,26 @@ tags:
 
 ### Takeaways — impact, connections to other papers, open questions (1-2 sentences)
 
-</details>
+<!-- DEEP-DIVE: optional. Delete everything from here to END-DEEP-DIVE if this paper only gets the card. -->
+## Deep dive
+
+<!--
+Rules (600–1500 words):
+- Lead with the conclusion; each subsection answers one question. Skip what doesn't matter ("see §5 for details").
+- Quotes: only when the paper's exact wording is the point (definitions, key claims). ≤3 lines each,
+  always followed by a line of your own ("What this really says is…", "Notice what's not claimed…").
+- Paper figures: at most 1–2, with attribution; caption says what to look at, not "Figure 1".
+- Prefer your own mermaid diagram for mechanisms; prefer a small worked example for abstract definitions.
+- If quotes are more than ~1/3 of the text, it's an excerpt, not an explanation.
+-->
+
+### <Question this subsection answers>
+
+> <short quote from the paper> (§X)
+
+<your interpretation>
+
+### Worked example
+
+### My take
+<!-- END-DEEP-DIVE -->
