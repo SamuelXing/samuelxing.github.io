@@ -22,3 +22,4 @@ package-lock.json
 # Ignore files created by MacOS
 .DS_Store
 .claude/settings.local.json
+.claude/paper-review-log.md

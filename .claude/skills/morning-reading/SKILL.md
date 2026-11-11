@@ -5,7 +5,7 @@ description: Set up a new "[Morning Reading]" paper post skeleton in _posts/ whe
 
 # Morning Reading setup
 
-Samuel reads one paper each morning and takes notes in an unpublished post. Your job is **setup only**: create the skeleton so Samuel can start writing. Do NOT fill in the note sections — answering them is the point of the exercise. (If Samuel explicitly asks for help with content, that's a separate request.)
+Samuel reads one paper each morning and writes a short TL;DR card in an unpublished post, plus a longer deep dive (in the style of The Morning Paper) for the papers worth it. Your job is **setup only**: create the skeleton so Samuel can start writing. Do NOT fill in the note sections — answering them is the point of the exercise. (If Samuel explicitly asks for help with content, that's a separate request.)
 
 ## Steps
 
@@ -24,41 +24,10 @@ Samuel reads one paper each morning and takes notes in an unpublished post. Your
    - Always include `paper-reading`.
    - Course tag: copy it from the most recent `[Morning Reading]` post (`grep -l "Morning Reading" _posts/*`), e.g. `UIUC CS 525`. Use a different one only if Samuel says so.
 
-5. **Write the file** using exactly this structure (the six headings mirror `_posts/Reading-template.md`):
+5. **Write the file** by copying `_posts/Reading-template.md` and filling in the front matter and the `**Paper:**` line. The template has two layers:
+   - **TL;DR card**: the six questions. Always keep it.
+   - **Deep dive**: everything between the `DEEP-DIVE` and `END-DEEP-DIVE` comments. **Remove it by default.** Keep it only if Samuel says this paper gets a deep dive (e.g. "deep dive", "full post", "long version"). If Samuel asks to add one to an existing post later, append that block from the template to the end of the post.
 
-```markdown
----
-title: '[Morning Reading] <Canonical Paper Title>'
-date: YYYY-MM-DD
-permalink: /posts/YYYY/MM/<slug>/
-published: false
-tags:
-  - <topic-tag>
-  - <topic-tag>
-  - paper-reading
-  - <course tag>
----
-
-**Paper:** [<Title>](<pdf link>) — <Authors>, <Venue> <Year>
-
-<details markdown="1">
-<summary><b>Detailed Notes</b></summary>
-
-### Problem — what problem, and why is it hard? (1-2 sentences)
-
-### Key insight — the one idea that makes the solution work (1 sentence)
-
-### How it works — the mechanism, at a level you could re-explain (2-4 sentences)
-
-### Evidence — how do they show it works? (eval, proof, or argument) (1-2 sentences)
-
-### Limitations & assumptions — what does it assume, and where does it break? (1-2 sentences)
-
-### Takeaways — impact, connections to other papers, open questions (1-2 sentences)
-
-</details>
-```
-
-If no PDF link was found, link the DOI or omit the link.
+   If no PDF link was found, link the DOI or omit the link.
 
 6. **Report back** briefly: the file path as a clickable link, the citation line, and any existing posts in `_posts/` that relate to this paper (e.g. a post on a system that builds on it), so Samuel can cross-link. Don't commit.
